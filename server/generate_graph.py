@@ -1,18 +1,25 @@
-import pymongo
-from pymongo import MongoClient
+import boto3
 import json
 import matplotlib.pyplot as plt
 import logging
-client = MongoClient('mongodb://localhost:27017/')
-db = client['empmern']
-collection = db['employees']
-print("Connected")
 
-highest_hourly_rate_doc = collection.find_one(sort=[("Hourly Rate", pymongo.DESCENDING)])
-smallest_hourly_Rate = collection.find_one({"Hourly Rate": {"$exists": True}},sort=[("Hourly Rate", pymongo.ASCENDING)])
 
-hourlyrate=[{"highest":highest_hourly_rate_doc['Hourly Rate']},
-            {"lowest":smallest_hourly_Rate['Hourly Rate']}]
+dynamodb = boto3.resource('dynamodb', region_name='your-region', aws_access_key_id='your-access-key-id', aws_secret_access_key='your-secret-access-key')
+
+
+table = dynamodb.Table('EmployeeTable')
+
+
+response = table.scan()
+items = response['Items']
+
+highest_hourly_rate_doc = max(items, key=lambda x: x['Hourly Rate'])
+smallest_hourly_Rate = min(items, key=lambda x: x['Hourly Rate'])
+
+hourlyrate = [
+    {"highest": highest_hourly_rate_doc['Hourly Rate']},
+    {"lowest": smallest_hourly_Rate['Hourly Rate']}
+]
 
 try:
     with open('E:\\employeesys\\frontend\\public\\hourlyrate.json', 'w') as json_file:
@@ -21,10 +28,10 @@ except Exception as e:
     logging.error(f"Error writing to file: {e}")
 
 
-part_time_count = collection.count_documents({"Full or Part-Time": "P"})
-full_time_count = collection.count_documents({"Full or Part-Time": "F"})
+part_time_count = sum(1 for item in items if item.get("Full or Part-Time") == "P")
+full_time_count = sum(1 for item in items if item.get("Full or Part-Time") == "F")
 
-# Plotting the bar chart
+
 categories = ['Part-Time', 'Full-Time']
 values = [part_time_count, full_time_count]
 
@@ -37,17 +44,10 @@ print("First graph made")
 plt.close()
 
 
-data = collection.find({"Hourly Rate": {"$exists": True},"Typical Hours": {"$exists": True}},{"Hourly Rate": 1, "Typical Hours": 1})
+hourly_rates = [item['Hourly Rate'] for item in items if 'Hourly Rate' in item and 'Typical Hours' in item]
+typical_hours = [item['Typical Hours'] for item in items if 'Hourly Rate' in item and 'Typical Hours' in item]
 
-# Extract 'Hourly Rate' and 'Typical Hours' values
-hourly_rates = []
-typical_hours = []
 
-for record in data:
-    hourly_rates.append(record["Hourly Rate"])
-    typical_hours.append(record["Typical Hours"])
-
-# Plotting the scatter plot
 plt.scatter(typical_hours, hourly_rates, color='r', alpha=0.5)
 plt.title('Scatter Plot of Hourly Rate vs Typical Hours')
 plt.xlabel('Typical Hours')
@@ -56,12 +56,13 @@ plt.grid(True)
 plt.savefig('E:\\employeesys\\frontend\\public\\graph2.png')
 plt.close()
 
-part_time_count = collection.count_documents({"Salary or Hourly": "Salary"})
-full_time_count = collection.count_documents({"Salary or Hourly": "Hourly"})
 
-# Plotting the bar chart
+salary_count = sum(1 for item in items if item.get("Salary or Hourly") == "Salary")
+hourly_count = sum(1 for item in items if item.get("Salary or Hourly") == "Hourly")
+
+
 categories = ['Salary', 'Hourly']
-values = [part_time_count, full_time_count]
+values = [salary_count, hourly_count]
 
 plt.bar(categories, values, color=['blue', 'green'])
 plt.title('Number of Documents by Employment Type')
@@ -70,9 +71,10 @@ plt.ylabel('Number of Documents')
 plt.savefig('E:\\employeesys\\frontend\\public\\graph3.png')
 plt.close()
 
-salaries = [doc["Annual Salary"] for doc in collection.find( {"Annual Salary":{"$exists":True}})]
 
-# Plotting the histogram
+salaries = [item['Annual Salary'] for item in items if 'Annual Salary' in item]
+
+
 plt.hist(salaries, bins=10, color='skyblue', edgecolor='black')
 plt.title('Histogram of Salaries')
 plt.xlabel('Salary Range')
@@ -80,28 +82,33 @@ plt.ylabel('Frequency')
 plt.savefig('E:\\employeesys\\frontend\\public\\graph4.png')
 plt.close()
 
-pipeline = [
-    {"$group": {"_id": "$Job Titles", "count": {"$sum": 1}}},
-    {"$sort": {"count": -1}},
-    {"$limit":5}
-]
-jj = collection.aggregate(pipeline)
-with open('E:\\employeesys\\frontend\\public\\jobtitle.json', 'w') as json_file:
-    json.dump(list(jj), json_file)
 
-pipeline = [
-    {"$group": {"_id": "$Department", "count": {"$sum": 1}}},
-    {"$sort": {"count": -1}},
-    {"$limit":5}
-]
-jj = collection.aggregate(pipeline)
-with open('E:\\employeesys\\frontend\\public\\department.json', 'w') as json_file:
-    json.dump(list(jj), json_file)
+job_titles = {}
+for item in items:
+    job_titles[item['Job Titles']] = job_titles.get(item['Job Titles'], 0) + 1
+
+sorted_job_titles = sorted(job_titles.items(), key=lambda x: x[1], reverse=True)[:5]
+
+try:
+    with open('E:\\employeesys\\frontend\\public\\jobtitle.json', 'w') as json_file:
+        json.dump(sorted_job_titles, json_file)
+except Exception as e:
+    logging.error(f"Error writing to file: {e}")
 
 
-salaries = [doc["Annual Salary"] for doc in collection.find( {"Annual Salary":{"$exists":True}})]
+departments = {}
+for item in items:
+    departments[item['Department']] = departments.get(item['Department'], 0) + 1
 
-# Create a box plot
+sorted_departments = sorted(departments.items(), key=lambda x: x[1], reverse=True)[:5]
+
+try:
+    with open('E:\\employeesys\\frontend\\public\\department.json', 'w') as json_file:
+        json.dump(sorted_departments, json_file)
+except Exception as e:
+    logging.error(f"Error writing to file: {e}")
+
+
 plt.boxplot(salaries)
 plt.title('Box Plot of Salary Distribution')
 plt.ylabel('Salary')
@@ -109,24 +116,21 @@ plt.savefig('E:\\employeesys\\frontend\\public\\graph5.png')
 plt.close()
 
 
+average_salaries = {}
+for item in items:
+    department = item['Department']
+    salary = item.get('Annual Salary')
+    if salary:
+        if department not in average_salaries:
+            average_salaries[department] = {'total': 0, 'count': 0}
+        average_salaries[department]['total'] += salary
+        average_salaries[department]['count'] += 1
 
-pipeline = [
-    {
-        "$group": {
-            "_id": "$Department",
-            "averageSalary": {"$avg": "$Annual Salary"}
-        }
-    }
-]
-results = list(collection.aggregate(pipeline))
+average_salaries = {k: v['total'] / v['count'] for k, v in average_salaries.items()}
 
-# Extract departments and average salaries from the results
-departments = [result['_id'] for result in results]
-salaries = [result['averageSalary'] for result in results]
 
-# Create a bar plot
 plt.figure(figsize=(30, 10))
-plt.bar(departments, salaries, color='skyblue')
+plt.bar(average_salaries.keys(), average_salaries.values(), color='skyblue')
 plt.xlabel('Departments')
 plt.ylabel('Average Salary')
 plt.title('Average Salaries Across Different Departments')
